@@ -17,6 +17,17 @@ static const float PI_F = 3.14159265358979323846f;
 // draw_ticks_() and the temperature/date text placement below - so the
 // text lines stay flush with the actual tick ends even if this changes.
 static const float HOUR_TICK_INNER = 0.78f;
+// How far the minute hand reaches, as a fraction of R. Kept a little short
+// of HOUR_TICK_INNER (not flush with it, unlike the old 0.78f) on purpose -
+// see INNER_ERASE_R below.
+static const float MINUTE_HAND_LEN = 0.72f;
+// Radius (as a fraction of R) of the disc that gets erased and redrawn
+// every frame once the tick ring itself is no longer dirty - see the
+// ring_dirty_ branch in render_(). Has to comfortably contain everything
+// that actually moves (minute hand, second hand, hub, date/temperature
+// text) while staying short of HOUR_TICK_INNER, or the ticks would get
+// their innermost sliver erased and never redrawn.
+static const float INNER_ERASE_R = 0.75f;
 
 void *alloc_canvas_buf(size_t size) {
 #ifdef USE_ESP32
@@ -144,7 +155,9 @@ void SbbClock::draw_ticks_(lv_layer_t *layer, int cx, int cy, int R, Color color
   lv_draw_line_dsc_t dsc;
   lv_draw_line_dsc_init(&dsc);
   dsc.color = lv_color_make(color.r, color.g, color.b);
-  dsc.round_start = dsc.round_end = true;
+  // Flat caps, not rounded: cheaper to rasterize (no extra antialiased end
+  // circle per line) and closer to the real dial's flat rectangular marks.
+  dsc.round_start = dsc.round_end = false;
   for (int i = 0; i < 60; i++) {
     bool hour_pos = (i % 5 == 0);
     dsc.width = hour_pos ? std::max(2, R / 22) : std::max(1, R / 60);
@@ -257,24 +270,54 @@ void SbbClock::render_() {
 
   lv_layer_t layer;
   lv_canvas_init_layer(this->obj, &layer);
-  this->fill_bg_(&layer);
 
   Color ink = this->ink_now_();
-  if (this->show_face_) {
-    lv_draw_rect_dsc_t face;
-    lv_draw_rect_dsc_init(&face);
-    face.radius = LV_RADIUS_CIRCLE;
-    Color fc = this->face_color_();
-    face.bg_color = lv_color_make(fc.r, fc.g, fc.b);
-    face.bg_opa = LV_OPA_COVER;
-    face.border_color = lv_color_make(ink.r, ink.g, ink.b);
-    face.border_width = std::max(1, R / 40);
-    face.border_opa = LV_OPA_COVER;
-    lv_area_t area = {cx - R, cy - R, cx + R, cy + R};
-    lv_draw_rect(&layer, &face, &area);
+  // No hand, hub, or text ever reaches past INNER_ERASE_R, so the dial and
+  // the 60 tick lines - the expensive part, and the reason this component
+  // used to take the better part of a second per frame - only need
+  // (re)drawing on the first frame and after a night_mode flip, not on
+  // every render_interval tick. In between, only the inner disc where the
+  // hands actually live needs erasing and redrawing.
+  bool full_redraw = this->ring_dirty_ || this->transparent_;  // see fill_bg_() note below
+  if (full_redraw) {
+    this->fill_bg_(&layer);
+    if (this->show_face_) {
+      lv_draw_rect_dsc_t face;
+      lv_draw_rect_dsc_init(&face);
+      face.radius = LV_RADIUS_CIRCLE;
+      Color fc = this->face_color_();
+      face.bg_color = lv_color_make(fc.r, fc.g, fc.b);
+      face.bg_opa = LV_OPA_COVER;
+      face.border_color = lv_color_make(ink.r, ink.g, ink.b);
+      face.border_width = std::max(1, R / 40);
+      face.border_opa = LV_OPA_COVER;
+      lv_area_t area = {cx - R, cy - R, cx + R, cy + R};
+      lv_draw_rect(&layer, &face, &area);
+    }
+    if (this->show_ticks_)
+      this->draw_ticks_(&layer, cx, cy, R, ink);
+    this->ring_dirty_ = false;
+  } else {
+    // Erase just the inner disc back to whatever it was after the last
+    // full redraw (plain background, or the face fill if show_face is
+    // on) - one filled circle instead of a full canvas clear plus 60
+    // tick lines.
+    lv_draw_rect_dsc_t erase;
+    lv_draw_rect_dsc_init(&erase);
+    erase.radius = LV_RADIUS_CIRCLE;
+    Color under = this->show_face_ ? this->face_color_() : this->paper_now_();
+    erase.bg_color = lv_color_make(under.r, under.g, under.b);
+    erase.bg_opa = LV_OPA_COVER;
+    int inner_r = (int) (R * INNER_ERASE_R);
+    lv_area_t area = {cx - inner_r, cy - inner_r, cx + inner_r, cy + inner_r};
+    lv_draw_rect(&layer, &erase, &area);
   }
-  if (this->show_ticks_)
-    this->draw_ticks_(&layer, cx, cy, R, ink);
+  // `transparent: true` clears to fully transparent via a dedicated
+  // whole-canvas op (lv_canvas_fill_bg with LV_OPA_TRANSP) - a plain
+  // lv_draw_rect can't "erase to transparent" the same way a normal alpha
+  // blend would just draw nothing, so the disc-erase shortcut above only
+  // applies to the (now-default) opaque canvas; transparent stays on the
+  // full-redraw path every frame, same as before this change.
 
   int hh, mm, ss;
   uint8_t wday, mday, month;
@@ -319,7 +362,8 @@ void SbbClock::render_() {
   float second_deg = this->second_angle_deg_(elapsed_s);
 
   this->draw_bar_hand_(&layer, cx, cy, 0, (int) (R * 0.50f), hour_deg, std::max(2, R / 14), ink);
-  this->draw_bar_hand_(&layer, cx, cy, 0, (int) (R * 0.78f), minute_deg, std::max(2, R / 20), ink);
+  this->draw_bar_hand_(&layer, cx, cy, 0, (int) (R * MINUTE_HAND_LEN), minute_deg,
+                        std::max(2, R / 20), ink);
   if (this->show_seconds_)
     this->draw_second_hand_(&layer, cx, cy, R, second_deg, this->second_color_());
   this->draw_hub_(&layer, cx, cy, std::max(2, R / 16), ink);
