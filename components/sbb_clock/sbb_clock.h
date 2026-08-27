@@ -88,7 +88,16 @@ class SbbClock : public Component, public lvgl::LvCompound {
   // Plain runtime state, not config: call it from a `lambda:` in an
   // automation (e.g. bound to sun.is_below_horizon or a lux sensor) -
   // `id(my_clock).set_night_mode(true);`.
-  void set_night_mode(bool on) { this->night_mode_ = on; }
+  //
+  // Only marks the tick ring dirty (see render_()) when the value actually
+  // flips - an automation that calls this every loop with the same value
+  // (common with a polled sensor) must not force a full repaint each time.
+  void set_night_mode(bool on) {
+    if (on == this->night_mode_)
+      return;
+    this->night_mode_ = on;
+    this->ring_dirty_ = true;
+  }
   bool get_night_mode() const { return this->night_mode_; }
 
  protected:
@@ -170,6 +179,11 @@ class SbbClock : public Component, public lvgl::LvCompound {
   uint32_t last_sec_ms_{0};
   bool size_checked_{false};
   bool render_ok_{true};
+  // True on the first frame, and again whenever the tick ring's colours
+  // could have changed (night_mode) - see render_(). No hand, hub, or
+  // text ever reaches that ring, so it only needs (re)drawing then, not
+  // on every render_interval tick.
+  bool ring_dirty_{true};
 };
 
 }  // namespace sbb_clock

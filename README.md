@@ -65,6 +65,16 @@ exaggerate or soften the pause - the default is the researched real value.
   hands (as the old `clock.yaml` required) - that halves the default canvas
   RAM footprint (RGB565 instead of ARGB8888), unless you actually want a
   background to show through.
+- **The tick ring is drawn once, not every frame.** No hand, hub, or text
+  ever reaches out to where the 60 tick marks live, so redrawing all of them
+  every `render_interval` was pure waste - it's now only (re)drawn on the
+  first frame and after a `night_mode` flip; every other frame just erases
+  and redraws the small inner disc where the hands actually move. On real
+  hardware this is the difference between the component finishing well
+  within its render budget and it tripping ESPHome's "took a long time"
+  watchdog (`transparent: true` still does a full redraw every frame, since
+  a plain rect can't "erase to transparent" the way a full canvas clear
+  can).
 
 ## Usage
 
