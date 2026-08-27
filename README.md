@@ -1,3 +1,5 @@
+*Deutsch | [English](README.en.md)*
+
 # m5dial_clock_sbb
 
 Ein einziges, schlankes ESPHome/LVGL-Widget: die klassische **SBB-Bahnhofsuhr**
