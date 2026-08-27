@@ -13,6 +13,10 @@ namespace sbb_clock {
 
 static const char *const TAG = "sbb_clock";
 static const float PI_F = 3.14159265358979323846f;
+// Inner-end radius (as a fraction of R) of the hour ticks, shared by
+// draw_ticks_() and the temperature/date text placement below - so the
+// text lines stay flush with the actual tick ends even if this changes.
+static const float HOUR_TICK_INNER = 0.78f;
 
 void *alloc_canvas_buf(size_t size) {
 #ifdef USE_ESP32
@@ -144,7 +148,7 @@ void SbbClock::draw_ticks_(lv_layer_t *layer, int cx, int cy, int R, Color color
   for (int i = 0; i < 60; i++) {
     bool hour_pos = (i % 5 == 0);
     dsc.width = hour_pos ? std::max(2, R / 22) : std::max(1, R / 60);
-    float inner = hour_pos ? 0.78f : 0.90f;
+    float inner = hour_pos ? HOUR_TICK_INNER : 0.90f;
     float angle = i * 6.0f;
     dsc.p1 = polar_point(cx, cy, angle, R * inner);
     dsc.p2 = polar_point(cx, cy, angle, R * 0.96f);
@@ -208,7 +212,7 @@ void SbbClock::draw_hub_(lv_layer_t *layer, int cx, int cy, int r, Color color) 
 }
 
 void SbbClock::draw_text_(lv_layer_t *layer, const std::string &text, const lv_font_t *font,
-                           int cx, int cy, Color color, lv_opa_t opa) {
+                           int cx, int edge_y, bool align_bottom, Color color, lv_opa_t opa) {
   if (font == nullptr || text.empty())
     return;
   lv_point_t sz;
@@ -221,7 +225,7 @@ void SbbClock::draw_text_(lv_layer_t *layer, const std::string &text, const lv_f
   ld.text_local = 1;  // `text` is a stack-local std::string's buffer
   ld.opa = opa;
   int x = cx - sz.x / 2;
-  int y = cy - sz.y / 2;
+  int y = align_bottom ? edge_y - sz.y : edge_y;
   lv_area_t area = {x, y, x + sz.x, y + sz.y};
   lv_draw_label(layer, &ld, &area);
 }
@@ -281,6 +285,12 @@ void SbbClock::render_() {
 
   // Drawn before the hands, like the printed lines on a real dial - so the
   // hands sweep over the text, never under it.
+  //
+  // Flush against the hour ticks at the 2/10 o'clock (temperature) and
+  // 4/8 o'clock (date) positions - both sit at exactly +/-60 deg from 12,
+  // so their inner ends are at the same distance from the centre either
+  // way: R * HOUR_TICK_INNER * cos(60 deg) = R * HOUR_TICK_INNER * 0.5.
+  int tick_edge_offset = (int) lroundf(R * HOUR_TICK_INNER * 0.5f);
   if (this->show_temperature_) {
     lv_opa_t opa = LV_OPA_COVER;
 #ifdef USE_SENSOR
@@ -290,12 +300,13 @@ void SbbClock::render_() {
     opa = LV_OPA_40;
 #endif
     this->draw_text_(&layer, this->format_temperature_(), this->temperature_font_, cx,
-                      cy - (int) (R * 0.55f), ink, opa);
+                      cy - tick_edge_offset, /*align_bottom=*/true, ink, opa);
   }
   if (this->show_date_) {
     lv_opa_t opa = time_valid ? LV_OPA_COVER : LV_OPA_40;
     std::string date = this->format_date_(time_valid, wday, mday, month, year);
-    this->draw_text_(&layer, date, this->date_font_, cx, cy + (int) (R * 0.55f), ink, opa);
+    this->draw_text_(&layer, date, this->date_font_, cx, cy + tick_edge_offset,
+                      /*align_bottom=*/false, ink, opa);
   }
 
   // Real SBB kinematics: the minute hand only ever holds one of 60 fixed

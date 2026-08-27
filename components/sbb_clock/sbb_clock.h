@@ -131,9 +131,12 @@ class SbbClock : public Component, public lvgl::LvCompound {
   // near the tip, with a short counterweight tail on the opposite side.
   void draw_second_hand_(lv_layer_t *layer, int cx, int cy, int R, float angle_deg, Color color);
   void draw_hub_(lv_layer_t *layer, int cx, int cy, int r, Color color);
-  // Centres `text` horizontally on `cx`, vertical centre at `cy`.
+  // Centres `text` horizontally on `cx`. Vertically, `edge_y` is either the
+  // text's top (align_bottom = false) or bottom (align_bottom = true) -
+  // used to flush the temperature/date lines against the hour ticks above
+  // and below them rather than centering on a guessed offset.
   void draw_text_(lv_layer_t *layer, const std::string &text, const lv_font_t *font, int cx,
-                   int cy, Color color, lv_opa_t opa);
+                   int edge_y, bool align_bottom, Color color, lv_opa_t opa);
   std::string format_date_(bool time_valid, uint8_t day_of_week, uint8_t day_of_month,
                             uint8_t month, uint16_t year) const;
   std::string format_temperature_() const;
