@@ -1,0 +1,68 @@
+# =====================================================================
+#  Beispiel: SBB-Uhr als eigene LVGL-Seite auf einem M5Dial
+#
+#  Zum Ausprobieren/Kopieren gedacht - keine eigenständig lauffähige
+#  Konfiguration (kein board:, keine wifi:/api:, kein reales display:).
+#  Setzt einen bestehenden M5Dial-Basisbau voraus, der schon `time:`
+#  (hier: `homeassistant_time` als Beispiel-ID) und `lvgl:` mit einem
+#  Display bereitstellt.
+# =====================================================================
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/CzarofAK/m5dial_clock_sbb
+      ref: main
+    refresh: 1d
+    components: [sbb_clock]
+
+# Marker-Key - ohne ihn lädt ESPHome die Python-Seite der Komponente nicht.
+sbb_clock:
+
+color:
+  - id: col_ink
+    hex: FFFFFF
+  - id: col_bg
+    hex: "000000"
+  - id: col_second
+    hex: E74C3C
+
+lvgl:
+  pages:
+    - id: page_clock
+      bg_color: 0x000000
+      bg_opa: COVER
+      widgets:
+        - sbb_clock:
+            id: clock_face
+            time_id: homeassistant_time
+            align: CENTER
+            width: 240
+            height: 240
+            foreground: col_ink
+            background: col_bg
+            second_hand_color: col_second
+            render_interval: 100ms
+            show_seconds: true
+            # Verifizierter Realwert (SBB/Mondaine "Stop2Go"): 58s Sweep,
+            # 2s Pause auf 12 - Default, hier nur zur Sichtbarkeit gesetzt.
+            second_hand_sweep: 58s
+            show_ticks: true
+            show_face: false
+            show_date: true
+            show_temperature: true
+            temperature_sensor_id: s_aussentemp
+
+# Nachtmodus: schwarz/weiß invertiert, roter Sekundenzeiger bleibt rot -
+# hier an den Tag/Nacht-Status von Home Assistant gebunden. Beliebig durch
+# einen Lux-Sensor, eine feste Uhrzeit oder einen binary_sensor ersetzbar;
+# die Komponente selbst kennt nur `set_night_mode(bool)`, keine eigene Regel.
+binary_sensor:
+  - platform: homeassistant
+    id: ha_is_night
+    entity_id: sun.sun
+    attribute: is_below_horizon
+    on_state:
+      then:
+        - lambda: |-
+            id(clock_face).set_night_mode(x);
