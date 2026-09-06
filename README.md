@@ -68,14 +68,16 @@ exaggerate or soften the pause - the default is the researched real value.
 - **The tick ring is drawn once, not every frame.** No hand, hub, or text
   ever reaches out to where the 60 tick marks live, so redrawing all of them
   every `render_interval` was pure waste - it's now only (re)drawn on the
-  first frame and after a `night_mode` flip; every other frame just erases
-  and redraws the small inner disc where the hands actually move. On real
-  hardware this is the difference between the component finishing well
-  within its render budget and it tripping ESPHome's "took a long time"
-  watchdog. **`transparent: true` gets this too as long as `show_face:
-  true` is also set** (fixed 2026-09-06 - see "Fixed" below): a face
-  fully covers everything the inner-disc erase ever touches, so there's
-  no transparent pixel left for that erase to get wrong. Only
+  first frame and after a `night_mode` flip; every other frame only erases
+  and redraws the small bounding box the hands/hub/date/temperature text
+  actually touch that frame (see "Fixed" below for how tight that box is -
+  it used to be a fixed inner disc, now it's a real per-frame dirty rect).
+  On real hardware this is the difference between the component finishing
+  well within its render budget and it tripping ESPHome's "took a long
+  time" watchdog. **`transparent: true` gets this too as long as
+  `show_face: true` is also set** (fixed 2026-09-06 - see "Fixed" below):
+  a face fully covers everything that partial erase ever touches, so
+  there's no transparent pixel left for that erase to get wrong. Only
   `transparent: true` with `show_face: false` (ticks/hands floating
   directly over a transparent background, no face circle) still needs
   the full redraw every frame, since a plain rect can't "erase to
@@ -124,6 +126,33 @@ exaggerate or soften the pause - the default is the researched real value.
   (`transparent: true` → `corner_color: <a Color id matching your page's
   real background>`) - see `smart-ebl-display.yaml` in
   `smartebl_display_esphome` for the update this shipped alongside.
+
+- **2026-09-06 (round 3) - fixed-size inner-disc erase replaced with a
+  real per-frame dirty rect.** Round 1 above stopped redrawing the 60
+  tick marks every frame, but the "cheap" path it introduced still
+  erased and redrew a *fixed* disc (radius ~0.75 × the widget's radius)
+  on every `render_interval` tick, regardless of how little of it the
+  hands/hub/text actually touched that frame. That disc's area grows
+  with the *square* of the widget's radius, so it's cheap at the
+  240×240 M5Dial size this repo targets but expensive at a much larger
+  size - reported when scaling this widget up for a 10.1" display in
+  another project, where the widget's radius (and therefore the old
+  disc's area) is 20-30× larger than on the M5Dial. The component now
+  computes the exact bounding box of what each frame actually draws
+  (hour/minute/second hand, hub, date/temperature text), unions it with
+  what the previous frame drew, and erases/invalidates only that -
+  typically on the order of a tenth of the old fixed disc's area, since
+  the hands only ever point in one direction each rather than the "any
+  direction" worst case the old disc had to cover unconditionally. Also
+  switched from invalidating the whole widget every frame
+  (`lv_obj_invalidate`) to invalidating just that same small box
+  (`lv_obj_invalidate_area`), which matters most on a large panel: it
+  keeps the amount of pixel data LVGL flushes to the physical display
+  each frame proportional to what actually changed, not the widget's
+  full size. No config changes needed - this is a behavior fix in the
+  component itself, and applies at every canvas size, including the
+  240×240 M5Dial target (a smaller win there, but not a zero one: less
+  raster work and a smaller display flush per frame either way).
 
 ## Usage
 
@@ -213,12 +242,16 @@ behind it.)
 - `ESPTime::day_of_week` (Sunday = 1): verified directly from ESPHome's own
   `esphome/core/time.h`.
 - Every LVGL function/struct used (`lv_draw_line_dsc_t`, `lv_draw_rect_dsc_t`,
-  `lv_draw_label_dsc_t`, `lv_canvas_*`, `lv_draw_buf_*`) checked against the
-  real LVGL 9.5.0 source (the version ESPHome pins).
+  `lv_draw_label_dsc_t`, `lv_canvas_*`, `lv_draw_buf_*`, `lv_obj_get_coords`,
+  `lv_obj_invalidate_area`) checked against the real LVGL 9.5.0 source (the
+  version ESPHome pins).
 - The Python config side (`components/sbb_clock/__init__.py`) was
   successfully validated with `esphome config` against a real test
   configuration.
 - **Not possible in that session:** a full `esphome compile` - that pulls
   packages from PlatformIO's registry, which was blocked by that session's
   network policy. Run `esphome compile` locally once before flashing real
-  hardware.
+  hardware. This applies to the round-3 dirty-rect change (2026-09-06)
+  above too - it's reviewed against the LVGL 9.5.0 API and cross-checked
+  against every other call site in this file for matching geometry, but
+  not yet built or run on real hardware.
