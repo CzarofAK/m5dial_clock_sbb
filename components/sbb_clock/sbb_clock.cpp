@@ -146,7 +146,10 @@ void SbbClock::fill_bg_(lv_layer_t *layer) {
   if (this->transparent_) {
     lv_canvas_fill_bg(this->obj, lv_color_black(), LV_OPA_TRANSP);
   } else {
-    Color bg = this->paper_now_();
+    // corner_color_(), not paper_now_() directly - see set_corner_color()'s
+    // own comment. Falls back to paper_now_() (this call's only behavior
+    // before corner_color existed) when unset.
+    Color bg = this->corner_color_();
     lv_canvas_fill_bg(this->obj, lv_color_make(bg.r, bg.g, bg.b), LV_OPA_COVER);
   }
 }
@@ -331,7 +334,7 @@ void SbbClock::render_() {
     lv_draw_rect_dsc_t erase;
     lv_draw_rect_dsc_init(&erase);
     erase.radius = LV_RADIUS_CIRCLE;
-    Color under = this->show_face_ ? this->face_color_() : this->paper_now_();
+    Color under = this->show_face_ ? this->face_color_() : this->corner_color_();
     erase.bg_color = lv_color_make(under.r, under.g, under.b);
     erase.bg_opa = LV_OPA_COVER;
     int inner_r = (int) (R * INNER_ERASE_R);

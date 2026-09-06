@@ -46,6 +46,7 @@ CONF_RENDER_INTERVAL = "render_interval"
 CONF_SHOW_TICKS = "show_ticks"
 CONF_SHOW_FACE = "show_face"
 CONF_FACE_COLOR = "face_color"
+CONF_CORNER_COLOR = "corner_color"  # the canvas's own square corners, NOT swapped by night_mode
 CONF_NIGHT_MODE = "night_mode"
 CONF_SHOW_DATE = "show_date"
 CONF_DATE_FONT = "date_font"
@@ -103,6 +104,13 @@ WIDGET_SCHEMA = (
             cv.Optional(CONF_SHOW_TICKS, default=True): cv.boolean,
             cv.Optional(CONF_SHOW_FACE, default=False): cv.boolean,
             cv.Optional(CONF_FACE_COLOR): cv.use_id(ColorStruct),
+            # See set_corner_color()'s own comment (sbb_clock.h): lets a
+            # build on a fixed-color page skip `transparent: true` (and
+            # the ARGB8888 canvas / PSRAM cost that comes with it)
+            # entirely, by opaquely filling the square corners in the
+            # same color as what's actually behind them instead of
+            # clearing them to true alpha transparency.
+            cv.Optional(CONF_CORNER_COLOR): cv.use_id(ColorStruct),
             # Swaps foreground/background (dial, ticks, hour+minute hands,
             # date/temp text). The second hand keeps its own colour either
             # way - see set_second_hand_color / second_color_() in the .h.
@@ -186,6 +194,8 @@ class SbbClockWidgetType(WidgetType):
             lv_add(w.var.set_second_hand_color(await cg.get_variable(sc)))
         if (fc := config.get(CONF_FACE_COLOR)) is not None:
             lv_add(w.var.set_face_color(await cg.get_variable(fc)))
+        if (cc := config.get(CONF_CORNER_COLOR)) is not None:
+            lv_add(w.var.set_corner_color(await cg.get_variable(cc)))
         if (tid := config.get(CONF_TEMPERATURE_SENSOR_ID)) is not None:
             lv_add(w.var.set_temperature_sensor(await cg.get_variable(tid)))
 
