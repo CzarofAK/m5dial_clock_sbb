@@ -209,6 +209,15 @@ class SbbClock : public Component, public lvgl::LvCompound {
   // text ever reaches that ring, so it only needs (re)drawing then, not
   // on every render_interval tick.
   bool ring_dirty_{true};
+  // Canvas-local pixel bounding box of everything drawn on TOP of the tick
+  // ring (hour/minute/second hand, hub, date/temperature text) on the last
+  // frame that wasn't a full redraw - i.e. exactly the ink render_() has to
+  // erase before drawing the next frame's hands, so old positions don't
+  // leave a trail. Meaningless right after a full redraw (nothing left to
+  // erase, since the full repaint already overwrote it) - render_() only
+  // reads it on the non-full-redraw path. See render_()'s own comment for
+  // why this replaced a fixed-size disc erase.
+  lv_area_t last_dirty_area_{0, 0, 0, 0};
 };
 
 }  // namespace sbb_clock
