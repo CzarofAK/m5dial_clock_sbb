@@ -17,18 +17,8 @@ static const float PI_F = 3.14159265358979323846f;
 // draw_ticks_() and the temperature/date text placement below - so the
 // text lines stay flush with the actual tick ends even if this changes.
 static const float HOUR_TICK_INNER = 0.78f;
-// How far the minute hand reaches, as a fraction of R. Kept a little short
-// of HOUR_TICK_INNER (not flush with it, unlike the old 0.78f) on purpose -
-// see INNER_ERASE_R below.
+// How far the minute hand reaches, as a fraction of R.
 static const float MINUTE_HAND_LEN = 0.72f;
-// Radius (as a fraction of R) of the safety ceiling the dirty-rect erase
-// area is clamped to - see the block comment above area_union() below.
-// Nothing at default proportions reaches this; it only matters if a future
-// change stretches a hand further out without updating this to match. Used
-// to be the actual erase radius (a full disc, redrawn every frame) - kept
-// at the same value on purpose so the ceiling is exactly as generous as
-// the old always-safe behavior, just no longer the common case.
-static const float INNER_ERASE_R = 0.75f;
 
 void *alloc_canvas_buf(size_t size) {
 #ifdef USE_ESP32
@@ -61,36 +51,37 @@ static lv_point_precise_t polar_point(int cx, int cy, float angle_deg, float r) 
 }
 
 // ---- dirty-rect bookkeeping -------------------------------------------
-// render_() used to erase a fixed-size disc (radius R * INNER_ERASE_R)
-// every frame that wasn't a full redraw, on the reasoning that hands can
-// point anywhere so nothing smaller is safe in the worst case. That's true
-// across ALL possible frames, but wildly pessimistic for any ONE frame:
-// the hands only ever point in one specific direction each, so what
-// actually needs erasing/redrawing is a handful of thin lines plus a small
-// hub and up to two text labels - not a full disc. The disc's area is
-// O(R^2); scaling the widget from a 240x240 dial (R ~ 118) up to a
-// 10"-class panel (R in the 500-600+ range) grows that disc by 20-30x, and
-// with it the per-frame raster time AND the bytes lv_obj_invalidate() asks
-// the display driver to flush to the physical panel afterwards - the
-// second cost is often the bigger one on a large SPI/parallel panel, since
-// it's bus-bandwidth bound rather than CPU bound.
+// render_() used to erase a fixed-size disc every frame that wasn't a full
+// redraw, on the reasoning that hands can point anywhere so nothing
+// smaller is safe in the worst case. That's true across ALL possible
+// frames, but wildly pessimistic for any ONE frame: the hands only ever
+// point in one specific direction each, so what actually needs
+// erasing/redrawing is a handful of thin lines plus a small hub and up to
+// two text labels - not a full disc.
 //
-// The fix: track the exact bounding box of what THIS frame draws (hands,
-// hub, text), union it with whatever was drawn on the PREVIOUS frame (so
-// the old positions get erased too, or hands would leave a trail), erase
-// only that box - a plain flat rect, not a circular fill, since the area
-// under it is always a uniform solid color (the face fill or the
-// background) - then draw. A full redraw (ring_dirty_/night_mode flip)
-// repaints the whole face anyway, so it skips this and just resets the
-// stored box to this frame's own footprint; there's no stale ink left to
-// chase in that case.
+// A first attempt at fixing this unioned every shape's bounding box into
+// ONE combined erase rectangle per frame. That's wrong, not just
+// pessimistic: each INDIVIDUAL shape's box is safely inside the round face
+// (see bar_hand_area()'s own comment for why), but the UNION of several
+// such boxes is not - an axis-aligned bounding box can combine the
+// left/right extent of one shape with the up/down extent of a completely
+// different one, landing a CORNER of the combined box farther from the
+// centre than either shape actually reaches (e.g. the hour hand pointing
+// straight up unioned with the minute hand pointing right). That corner
+// can end up outside the round face altogether, and erasing it with
+// face_color_() paints face colour into the square canvas's corner area -
+// visible as a stray rectangle wherever that corner colour differs from
+// the face (not on this repo's own 240x240 configs, where both happen to
+// be the same white - but visible when scaled up for a page/bezel colour
+// that differs from the face, as reported against a 10"-class build).
 //
-// Every box that ends up feeding the erase step is clamped to the same
-// square that bounded the old disc (R * INNER_ERASE_R) before use - a
-// defensive ceiling, not the normal case. If a bounding-box calculation
-// below is ever wrong for some hand/text combination, the erase can only
-// fall back toward the old proven-safe behavior (erasing a bit more of the
-// interior than strictly needed), never eat into the tick ring outside it.
+// The fix actually used below: track and erase each shape SEPARATELY
+// (hour, minute, second, hub, temperature text, date text), not as one
+// combined box. Every one of those boxes is individually safe (see
+// bar_hand_area()/second_hand_area()'s own comments), so there's no
+// combined-box corner to worry about. Erase/redraw is a handful of small
+// rects per frame instead of one - still far cheaper than the old fixed
+// disc, since each box is tightly sized to its own shape.
 static lv_area_t area_union(const lv_area_t &a, const lv_area_t &b) {
   return lv_area_t{std::min(a.x1, b.x1), std::min(a.y1, b.y1), std::max(a.x2, b.x2),
                     std::max(a.y2, b.y2)};
@@ -119,6 +110,16 @@ static lv_area_t circle_area(int cx, int cy, int r) {
 
 // Bounding box of a bar hand (see draw_bar_hand_()) - same p1/p2 math,
 // called with the exact same arguments so the two never drift apart.
+//
+// Safe by construction: p1 is at distance `start_len` and p2 at distance
+// `len` from (cx, cy), both along the SAME angle - i.e. this is a segment
+// through (or starting at) the centre. For any such segment, every corner
+// of its axis-aligned bounding box is within max(|start_len|, |len|) of
+// the centre (each corner's x and y coordinates are individually within
+// that range of cx/cy, and distance can only shrink when x and y are
+// combined) - so as long as the caller never passes a `len` beyond the
+// dial radius (true for every hand below), this box never reaches past
+// the round face.
 static lv_area_t bar_hand_area(int cx, int cy, int start_len, int len, float angle_deg,
                                 int width) {
   lv_point_precise_t p1 = polar_point(cx, cy, angle_deg, start_len);
@@ -147,6 +148,10 @@ static SecondHandGeom second_hand_geom(int cx, int cy, int R, float angle_deg) {
   return g;
 }
 
+// Safe for the same reason as bar_hand_area(): tail and ball both sit on
+// the second hand's own single angle through the centre (tail_len < R,
+// ball_dist < R), and the ball's own circle is padded around a point
+// that's itself within R of the centre - see circle_area()'s docstring.
 static lv_area_t second_hand_area(int cx, int cy, int R, float angle_deg) {
   SecondHandGeom g = second_hand_geom(cx, cy, R, angle_deg);
   lv_area_t shaft = line_area(g.tail, g.ball, g.width);
@@ -379,9 +384,6 @@ void SbbClock::render_() {
   Color ink = this->ink_now_();
 
   // ---- read the clock and work out every hand's angle up front -----------
-  // Used to happen after the redraw-strategy decision below; moved ahead of
-  // it because the dirty-rect bookkeeping needs to know exactly where the
-  // hands/hub/text land THIS frame before it can decide how much to erase.
   int hh, mm, ss;
   uint8_t wday, mday, month;
   uint16_t year;
@@ -423,30 +425,28 @@ void SbbClock::render_() {
     date_opa = time_valid ? LV_OPA_COVER : LV_OPA_40;
   }
 
-  // ---- this frame's ink footprint, computed before anything is drawn -----
-  // Union of every bounding box below is exactly the area this frame
-  // touches - see the block comment above area_union() for why that
-  // replaced a fixed-size disc erase.
-  lv_area_t frame_area = bar_hand_area(cx, cy, 0, hour_len, hour_deg, hour_w);
-  frame_area = area_union(frame_area, bar_hand_area(cx, cy, 0, minute_len, minute_deg, minute_w));
+  // ---- this frame's per-shape footprints, computed before anything is
+  // drawn. Tracked and erased PER SHAPE, not as one combined bounding box
+  // - see the block comment above area_union() for why a combined box is
+  // unsound here.
+  lv_area_t hour_a = bar_hand_area(cx, cy, 0, hour_len, hour_deg, hour_w);
+  lv_area_t minute_a = bar_hand_area(cx, cy, 0, minute_len, minute_deg, minute_w);
+  lv_area_t hub_a = circle_area(cx, cy, hub_r);
+  lv_area_t second_a{0, 0, 0, 0};
   if (this->show_seconds_)
-    frame_area = area_union(frame_area, second_hand_area(cx, cy, R, second_deg));
-  frame_area = area_union(frame_area, circle_area(cx, cy, hub_r));
-  lv_area_t text_a{0, 0, 0, 0};
-  if (this->show_temperature_ &&
-      text_area(text_a, temp_text, this->temperature_font_, cx, cy - tick_edge_offset, true))
-    frame_area = area_union(frame_area, pad_area(text_a, 2));
-  if (this->show_date_ &&
-      text_area(text_a, date_text, this->date_font_, cx, cy + tick_edge_offset, false))
-    frame_area = area_union(frame_area, pad_area(text_a, 2));
-
-  // Defensive ceiling - see the block comment above area_union().
-  int safe_r = (int) (R * INNER_ERASE_R);
-  lv_area_t safe_box = {cx - safe_r, cy - safe_r, cx + safe_r, cy + safe_r};
-  frame_area.x1 = std::max(frame_area.x1, safe_box.x1);
-  frame_area.y1 = std::max(frame_area.y1, safe_box.y1);
-  frame_area.x2 = std::min(frame_area.x2, safe_box.x2);
-  frame_area.y2 = std::min(frame_area.y2, safe_box.y2);
+    second_a = second_hand_area(cx, cy, R, second_deg);
+  lv_area_t temp_a{0, 0, 0, 0};
+  bool has_temp_a =
+      this->show_temperature_ &&
+      text_area(temp_a, temp_text, this->temperature_font_, cx, cy - tick_edge_offset, true);
+  if (has_temp_a)
+    temp_a = pad_area(temp_a, 2);
+  lv_area_t date_a{0, 0, 0, 0};
+  bool has_date_a =
+      this->show_date_ &&
+      text_area(date_a, date_text, this->date_font_, cx, cy + tick_edge_offset, false);
+  if (has_date_a)
+    date_a = pad_area(date_a, 2);
 
   lv_layer_t layer;
   lv_canvas_init_layer(this->obj, &layer);
@@ -455,8 +455,8 @@ void SbbClock::render_() {
   // the 60 tick lines - the expensive part, and the reason this component
   // used to take the better part of a second per frame - only need
   // (re)drawing on the first frame and after a night_mode flip, not on
-  // every render_interval tick. In between, only the (small) area the
-  // hands/hub/text actually touch needs erasing and redrawing.
+  // every render_interval tick. In between, only the small per-shape boxes
+  // computed above need erasing and redrawing.
   //
   // Real bug fixed (uneven/"hopping" second hand reported on a 450x450,
   // transparent: true face): `transparent_` alone used to force the FULL
@@ -483,9 +483,9 @@ void SbbClock::render_() {
   // frame, since there the erase step would otherwise paint an opaque
   // patch where the background is supposed to show through.
   bool full_redraw = this->ring_dirty_ || (this->transparent_ && !this->show_face_);
-  // Only meaningful when !full_redraw - see the invalidate step at the end
-  // of this function, the only other place this is read.
-  lv_area_t erase_area{0, 0, 0, 0};
+  lv_area_t touched{0, 0, 0, 0};  // union of every rect actually repainted this frame
+  bool has_touched = false;
+
   if (full_redraw) {
     this->fill_bg_(&layer);
     if (this->show_face_) {
@@ -505,29 +505,34 @@ void SbbClock::render_() {
       this->draw_ticks_(&layer, cx, cy, R, ink);
     this->ring_dirty_ = false;
   } else {
-    // Erase exactly the union of what's about to be drawn and what was
-    // drawn last frame (frame_area / last_dirty_area_) back to whatever's
-    // underneath - the face fill if show_face is on, otherwise the plain
-    // background. A flat rect, not a circular fill: the area under it is
-    // always a uniform solid color, so a rect reproduces it exactly, and a
-    // rect is cheaper to rasterize than a disc of the same bounding size.
-    erase_area = area_union(this->last_dirty_area_, frame_area);
-    // Re-clamp: the union with last_dirty_area_ could in principle push
-    // back out past safe_box even though frame_area alone didn't (e.g. a
-    // config change shrinking the hands mid-run). Doesn't happen today -
-    // cheap insurance regardless.
-    erase_area.x1 = std::max(erase_area.x1, safe_box.x1);
-    erase_area.y1 = std::max(erase_area.y1, safe_box.y1);
-    erase_area.x2 = std::min(erase_area.x2, safe_box.x2);
-    erase_area.y2 = std::min(erase_area.y2, safe_box.y2);
-
+    // Erase each shape's own box (unioned with where that SAME shape was
+    // last frame, so its old position gets cleared too) separately - a
+    // plain flat rect per shape, not a circular fill or one combined box.
+    // The area under each is always a uniform solid color (the face fill
+    // or the background), so a rect reproduces it exactly; see the block
+    // comment above area_union() for why this has to stay per-shape.
+    Color under = this->show_face_ ? this->face_color_() : this->corner_color_();
     lv_draw_rect_dsc_t erase_dsc;
     lv_draw_rect_dsc_init(&erase_dsc);
-    erase_dsc.radius = 0;  // plain rect - see comment above
-    Color under = this->show_face_ ? this->face_color_() : this->corner_color_();
+    erase_dsc.radius = 0;  // plain rect, not a disc
     erase_dsc.bg_color = lv_color_make(under.r, under.g, under.b);
     erase_dsc.bg_opa = LV_OPA_COVER;
-    lv_draw_rect(&layer, &erase_dsc, &erase_area);
+
+    auto erase_shape = [&](lv_area_t &prev, const lv_area_t &cur) {
+      lv_area_t e = area_union(prev, cur);
+      lv_draw_rect(&layer, &erase_dsc, &e);
+      touched = has_touched ? area_union(touched, e) : e;
+      has_touched = true;
+    };
+    erase_shape(this->last_dirty_.hour, hour_a);
+    erase_shape(this->last_dirty_.minute, minute_a);
+    if (this->show_seconds_)
+      erase_shape(this->last_dirty_.second, second_a);
+    erase_shape(this->last_dirty_.hub, hub_a);
+    if (has_temp_a)
+      erase_shape(this->last_dirty_.temp_text, temp_a);
+    if (has_date_a)
+      erase_shape(this->last_dirty_.date_text, date_a);
   }
   // `transparent: true` clears to fully transparent via a dedicated
   // whole-canvas op (lv_canvas_fill_bg with LV_OPA_TRANSP) - a plain
@@ -556,22 +561,29 @@ void SbbClock::render_() {
   lv_canvas_finish_layer(this->obj, &layer);
 
   // Nothing from before a full repaint survives it, so this frame's own
-  // footprint is the whole story for next time - not a union with
-  // whatever was dirty before the repaint.
-  this->last_dirty_area_ = frame_area;
+  // per-shape footprint is the whole story for next time - not a union
+  // with whatever was dirty before the repaint.
+  this->last_dirty_.hour = hour_a;
+  this->last_dirty_.minute = minute_a;
+  if (this->show_seconds_)
+    this->last_dirty_.second = second_a;
+  this->last_dirty_.hub = hub_a;
+  if (has_temp_a)
+    this->last_dirty_.temp_text = temp_a;
+  if (has_date_a)
+    this->last_dirty_.date_text = date_a;
 
   if (full_redraw) {
     // Whole widget changed - let LVGL work out its own absolute coords,
     // exactly as this component always has. Kept as the plain whole-object
-    // call (rather than translating {0,0,w-1,h-1} by hand like the branch
-    // below) specifically because it stays correct even if this runs
-    // before LVGL has fully settled the widget's on-screen position (e.g.
-    // very early after boot) - lv_obj_invalidate() re-derives that from
-    // the object itself every time, nothing here needs to guess it.
+    // call specifically because it stays correct even if this runs before
+    // LVGL has fully settled the widget's on-screen position (e.g. very
+    // early after boot) - lv_obj_invalidate() re-derives that from the
+    // object itself every time, nothing here needs to guess it.
     lv_obj_invalidate(this->obj);
-  } else {
-    // Translate `erase_area` (canvas-local pixel coords - what this frame
-    // actually repainted) to the absolute screen coords
+  } else if (has_touched) {
+    // Translate `touched` (canvas-local pixel coords - the union of every
+    // shape's erase rect this frame) to the absolute screen coords
     // lv_obj_invalidate_area() expects (the same system lv_obj_get_coords()
     // reports), and invalidate only that - not the whole widget every
     // frame. On a small 240x240 dial this barely matters; on a canvas
@@ -580,11 +592,15 @@ void SbbClock::render_() {
     // instead of the widget's full size. Safe to rely on get_coords() here
     // (unlike the full-redraw branch above): this path only ever runs
     // after at least one full-redraw frame has already completed, by
-    // which point LVGL's layout has settled.
+    // which point LVGL's layout has settled. Over-covering this box a
+    // little (it's the union of several separate rects, not a tight
+    // shape) is harmless for invalidate specifically - unlike for the
+    // erase step above, painting a few already-correct pixels again
+    // doesn't create any visible artifact.
     lv_area_t obj_coords;
     lv_obj_get_coords(this->obj, &obj_coords);
-    lv_area_t abs_area = {erase_area.x1 + obj_coords.x1, erase_area.y1 + obj_coords.y1,
-                           erase_area.x2 + obj_coords.x1, erase_area.y2 + obj_coords.y1};
+    lv_area_t abs_area = {touched.x1 + obj_coords.x1, touched.y1 + obj_coords.y1,
+                           touched.x2 + obj_coords.x1, touched.y2 + obj_coords.y1};
     lv_obj_invalidate_area(this->obj, &abs_area);
   }
 }
