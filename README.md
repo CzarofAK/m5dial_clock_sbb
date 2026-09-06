@@ -102,6 +102,29 @@ exaggerate or soften the pause - the default is the researched real value.
   it's a behavior fix in the component itself, `external_components:`
   with `ref: main` picks it up on the next fetch.
 
+- **2026-09-06 (round 2) - hopping persisted even with the fix above,
+  on real hardware.** The bullet above only removed the "redraw the
+  tick ring every frame" cost - the canvas *itself* was still ARGB8888
+  in PSRAM (`transparent: true`'s only way to get a corner-punched-out
+  round face used to be a real alpha channel), and even the cheap
+  inner-disc-only erase/redraw the fix above enabled is still slower on
+  a PSRAM buffer than the render budget really wants at this canvas
+  size (measured on real ESP32-P4 hardware: `sbb_clock` still logged
+  ESPHome's "took a long time" component warning periodically). Added
+  `corner_color` (see the config table above) so a build on a fixed
+  solid-color page (the normal case) doesn't need `transparent: true` -
+  and therefore doesn't need an alpha channel at all - to make the
+  square canvas's corners disappear into the page behind it: just paint
+  them the same fixed color as that page, opaquely, same as the face
+  itself. That drops a 450x450 canvas from ARGB8888 (810112 bytes -
+  doesn't fit in this chip's ~432KB of free internal RAM, hence PSRAM)
+  to the same native color format as everything else (405000 bytes -
+  fits comfortably), eliminating the PSRAM cost at its root rather than
+  just shrinking how often it's paid. Requires a config change to adopt
+  (`transparent: true` → `corner_color: <a Color id matching your page's
+  real background>`) - see `smart-ebl-display.yaml` in
+  `smartebl_display_esphome` for the update this shipped alongside.
+
 ## Usage
 
 ```yaml
@@ -175,6 +198,7 @@ behind it.)
 | `show_ticks` | bool | `true` | minute/hour ticks |
 | `show_face` | bool | `false` | filled dial circle |
 | `face_color` | Color id | `background` | only with `show_face` |
+| `corner_color` | Color id | `background` | the square canvas's own corners (outside the round face) - NOT swapped by `night_mode`, unlike `background`. Set this to your page's real background instead of using `transparent: true` when it's a fixed solid color - see "Fixed" below |
 | `night_mode` | bool | `false` | initial value; toggle at runtime via `set_night_mode()` |
 | `show_date` | bool | `false` | date line at the bottom |
 | `date_font` | font | `montserrat_16` | |

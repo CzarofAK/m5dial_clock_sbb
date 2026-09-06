@@ -77,6 +77,26 @@ class SbbClock : public Component, public lvgl::LvCompound {
     this->face_ = c;
     this->has_face_color_ = true;
   }
+  // The square canvas's own corners (everything outside the round face -
+  // see fill_bg_()) - deliberately NOT swapped by night_mode like
+  // background/foreground are, and NOT the same thing as `transparent:`.
+  // A build that always sits on one fixed page background (typical: a
+  // solid-color page/screen, not a live camera feed or photo behind it)
+  // can set this to that same fixed color and leave `transparent:` at
+  // its default `false` - opaque corners in the same color as what's
+  // behind them look identical to true transparency, at a fraction of
+  // the memory and render cost (`transparent: true` needs an ARGB8888
+  // canvas; this needs the same format as everything else, so a size
+  // that only just missed fitting in internal RAM as ARGB8888 often
+  // fits comfortably once it doesn't need an alpha channel at all - see
+  // alloc_canvas_buf()'s own PSRAM-fallback warning for why that matters
+  // to render timing). Falls back to paper_now_() (this widget's
+  // previous, only behavior) when left unset, so existing configs are
+  // unaffected.
+  void set_corner_color(Color c) {
+    this->corner_ = c;
+    this->has_corner_color_ = true;
+  }
 
   // ---- runtime control ------------------------------------------------------
   // Swaps foreground/background (dial, ticks, hour+minute hands, date/temp
@@ -109,6 +129,9 @@ class SbbClock : public Component, public lvgl::LvCompound {
     return this->has_second_color_ ? this->second_ : Color(0xE7, 0x4C, 0x3C);
   }
   Color face_color_() const { return this->has_face_color_ ? this->face_ : this->paper_now_(); }
+  // See set_corner_color()'s own comment for why this is deliberately
+  // NOT night_mode-aware, unlike paper_now_()/ink_now_()/face_color_().
+  Color corner_color_() const { return this->has_corner_color_ ? this->corner_ : this->paper_now_(); }
 
   // Reads the wall clock once and fills every field render_() needs from
   // it; false while time isn't valid yet. Even then it fills hh/mm/ss with a
@@ -172,8 +195,10 @@ class SbbClock : public Component, public lvgl::LvCompound {
   Color paper_{0x00, 0x00, 0x00};
   Color second_{0xE7, 0x4C, 0x3C};
   Color face_{0x00, 0x00, 0x00};
+  Color corner_{0x00, 0x00, 0x00};
   bool has_second_color_{false};
   bool has_face_color_{false};
+  bool has_corner_color_{false};
 
   int last_sec_{-1};
   uint32_t last_sec_ms_{0};
