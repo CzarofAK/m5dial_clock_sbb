@@ -69,9 +69,9 @@ exaggerate or soften the pause - the default is the researched real value.
   ever reaches out to where the 60 tick marks live, so redrawing all of them
   every `render_interval` was pure waste - it's now only (re)drawn on the
   first frame and after a `night_mode` flip; every other frame only erases
-  and redraws the small bounding box the hands/hub/date/temperature text
-  actually touch that frame (see "Fixed" below for how tight that box is -
-  it used to be a fixed inner disc, now it's a real per-frame dirty rect).
+  and redraws each hand/hub/date/temperature text's own small bounding box
+  (see "Fixed" below - it used to be a fixed inner disc, then briefly one
+  combined per-frame box, now each shape is tracked and erased separately).
   On real hardware this is the difference between the component finishing
   well within its render budget and it tripping ESPHome's "took a long
   time" watchdog. **`transparent: true` gets this too as long as
@@ -153,6 +153,40 @@ exaggerate or soften the pause - the default is the researched real value.
   component itself, and applies at every canvas size, including the
   240×240 M5Dial target (a smaller win there, but not a zero one: less
   raster work and a smaller display flush per frame either way).
+
+- **2026-09-06 (round 4) - round 3 could paint a stray white rectangle
+  past the round face on a large, scaled-up build.** Reported on a
+  10.1"-class panel: a rectangular patch, above the dial face but below
+  the second hand, on the right side of the clock. Root cause: round 3
+  combined every shape's bounding box (hands, hub, text) into ONE
+  rectangle before erasing it, clamped to a square "safety ceiling" of
+  half-width `0.75 × R`. A SQUARE's own corners sit `√2` farther from
+  the centre than its edges - `0.75R × √2 ≈ 1.06R`, past the round
+  face's own radius `R`. Two hands pointing in sufficiently different
+  directions (e.g. the hour hand near vertical, the minute hand near
+  horizontal - unremarkable, happens for a large fraction of every
+  hour) push the combined box's corner into that overshoot zone, and
+  the erase step paints `face_color_()` there - correct only *inside*
+  the round face. Past it, that pixel is the square canvas's own corner
+  region, which should show `corner_color_()`/whatever's actually
+  behind the widget instead. Invisible on every config this repo ships
+  today, purely by coincidence: `page_clock.yaml` never sets
+  `face_color`/`corner_color`, so both default to the same background
+  color, and painting one color where the other belongs draws nothing
+  different. Visible as soon as the two differ - e.g. once scaled up
+  for a page whose face color doesn't match its own bezel/background,
+  as reported. No square clamp can fix this in general: shrinking it
+  enough to stay inside the face on the diagonal would clip the minute
+  hand's own legitimate `0.72R` reach on-axis (`0.72 × √2 > 1.0`
+  already), so a fixed square can't be simultaneously tight on-axis and
+  safe on the diagonal. Fixed by dropping the combined box entirely:
+  each shape (hour hand, minute hand, second hand, hub, temperature
+  text, date text) is now erased/redrawn as its own separate small
+  rect. Every individual shape's box is safe by construction - each is
+  a line or circle passing through (or centred near) the canvas centre
+  with a known max reach well under `R` - so there's no cross-shape
+  corner left to overshoot with, and no clamp is needed at all. No
+  config changes needed to pick this up.
 
 ## Usage
 
@@ -251,7 +285,9 @@ behind it.)
 - **Not possible in that session:** a full `esphome compile` - that pulls
   packages from PlatformIO's registry, which was blocked by that session's
   network policy. Run `esphome compile` locally once before flashing real
-  hardware. This applies to the round-3 dirty-rect change (2026-09-06)
-  above too - it's reviewed against the LVGL 9.5.0 API and cross-checked
-  against every other call site in this file for matching geometry, but
-  not yet built or run on real hardware.
+  hardware. This applies to the round-3 and round-4 dirty-rect changes
+  (2026-09-06) above too - reviewed against the LVGL 9.5.0 API and
+  cross-checked geometrically against every other call site in this file,
+  but not yet built or run on real hardware. Round 4 specifically was
+  reported and fixed based on a description of the visible symptom on a
+  real 10.1"-class panel, not from a local repro.
