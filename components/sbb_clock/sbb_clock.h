@@ -23,6 +23,26 @@ namespace sbb_clock {
 // the canvas doesn't fit internally.
 void *alloc_canvas_buf(size_t size);
 
+// Canvas-local pixel bounding boxes of where each hand/hub/text landed on
+// the last frame that wasn't a full redraw - tracked PER SHAPE, not as one
+// combined box. See render_()'s own comment (sbb_clock.cpp) for why a
+// single combined bounding box is unsound here: the union of several
+// bounding boxes that each individually stay safely inside the round face
+// can still have ITS OWN corners land outside the face (e.g. the hour hand
+// pointing up and the minute hand pointing right at the same time), so
+// erasing "the one big box" can paint face color past the actual round
+// face - visible as a stray rectangle once the page behind the widget
+// isn't the same color as the face. Erasing/redrawing each shape's own
+// (individually safe) box instead avoids that entirely.
+struct SbbClockDirtyAreas {
+  lv_area_t hour{0, 0, 0, 0};
+  lv_area_t minute{0, 0, 0, 0};
+  lv_area_t second{0, 0, 0, 0};
+  lv_area_t hub{0, 0, 0, 0};
+  lv_area_t temp_text{0, 0, 0, 0};
+  lv_area_t date_text{0, 0, 0, 0};
+};
+
 // One SBB "Bahnhofsuhr" face on an LVGL 9 canvas: baton hour/minute hands, a
 // lollipop second hand, and the real mechanism's "Stop2Go" kinematics - the
 // second hand sweeps the dial and then parks at 12 for the rest of the
@@ -209,15 +229,7 @@ class SbbClock : public Component, public lvgl::LvCompound {
   // text ever reaches that ring, so it only needs (re)drawing then, not
   // on every render_interval tick.
   bool ring_dirty_{true};
-  // Canvas-local pixel bounding box of everything drawn on TOP of the tick
-  // ring (hour/minute/second hand, hub, date/temperature text) on the last
-  // frame that wasn't a full redraw - i.e. exactly the ink render_() has to
-  // erase before drawing the next frame's hands, so old positions don't
-  // leave a trail. Meaningless right after a full redraw (nothing left to
-  // erase, since the full repaint already overwrote it) - render_() only
-  // reads it on the non-full-redraw path. See render_()'s own comment for
-  // why this replaced a fixed-size disc erase.
-  lv_area_t last_dirty_area_{0, 0, 0, 0};
+  SbbClockDirtyAreas last_dirty_;
 };
 
 }  // namespace sbb_clock
