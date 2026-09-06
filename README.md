@@ -72,9 +72,35 @@ exaggerate or soften the pause - the default is the researched real value.
   and redraws the small inner disc where the hands actually move. On real
   hardware this is the difference between the component finishing well
   within its render budget and it tripping ESPHome's "took a long time"
-  watchdog (`transparent: true` still does a full redraw every frame, since
-  a plain rect can't "erase to transparent" the way a full canvas clear
-  can).
+  watchdog. **`transparent: true` gets this too as long as `show_face:
+  true` is also set** (fixed 2026-09-06 - see "Fixed" below): a face
+  fully covers everything the inner-disc erase ever touches, so there's
+  no transparent pixel left for that erase to get wrong. Only
+  `transparent: true` with `show_face: false` (ticks/hands floating
+  directly over a transparent background, no face circle) still needs
+  the full redraw every frame, since a plain rect can't "erase to
+  transparent" the way a full canvas clear can.
+
+## Fixed
+
+- **2026-09-06 - uneven/"hopping" second hand at large sizes.** Reported
+  on a 450x450, `transparent: true` + `show_face: true` face (`smart-ebl-
+  display.yaml`'s Mainscreen clock). Root cause: `transparent_` alone
+  used to force the expensive full-canvas-plus-60-ticks redraw on
+  *every* `render_interval` tick, not just the first frame/a `night_mode`
+  flip - and at that size the canvas is ARGB8888 in PSRAM (see
+  `alloc_canvas_buf()`'s own fallback warning), where a full repaint that
+  often can take longer than `render_interval` itself. Since the hand's
+  angle is always computed from the real wall clock rather than
+  accumulated per frame, a delayed/irregular render doesn't drift - it
+  *jumps* to catch up the next time it actually runs, which is exactly
+  what "hopping" looks like. Fixed: `transparent_` only forces the full
+  path now when `show_face_` is off (see the bullet above) - a build
+  using `show_face: true` (the only combination any of this project's
+  own configs actually use) gets the same cheap steady-state redraw an
+  opaque canvas already had. No config changes needed to pick this up -
+  it's a behavior fix in the component itself, `external_components:`
+  with `ref: main` picks it up on the next fetch.
 
 ## Usage
 
