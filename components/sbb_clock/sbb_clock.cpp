@@ -278,7 +278,33 @@ void SbbClock::render_() {
   // (re)drawing on the first frame and after a night_mode flip, not on
   // every render_interval tick. In between, only the inner disc where the
   // hands actually live needs erasing and redrawing.
-  bool full_redraw = this->ring_dirty_ || this->transparent_;  // see fill_bg_() note below
+  //
+  // Real bug fixed (uneven/"hopping" second hand reported on a 450x450,
+  // transparent: true face): `transparent_` alone used to force the FULL
+  // path - fill_bg_() to transparent, all 60 ticks, the face circle -
+  // every single render_interval tick, not just on the first frame or a
+  // night_mode flip. At this canvas's size that's ARGB8888 in PSRAM (see
+  // alloc_canvas_buf()'s own fallback warning), and repainting all of
+  // that every ~100-200ms can take longer than render_interval itself -
+  // the hand's angle is always computed from the real wall clock, not
+  // accumulated per frame, so a delayed/irregular render doesn't drift,
+  // it *jumps* to catch up next time it finally runs. That's exactly
+  // what "hopping" is.
+  //
+  // The fix: `transparent_` only genuinely needs that full path once.
+  // Its entire purpose is punching the round face out of the canvas's
+  // square corners (see fill_bg_()'s own comment) - once that's done and
+  // `show_face_` is on, EVERY pixel the inner-disc erase below ever
+  // touches (radius INNER_ERASE_R, comfortably inside the opaque face)
+  // is already opaque face fill, not corner transparency. So with a
+  // face, the cheap erase-and-redraw-the-inner-disc path is exactly as
+  // correct for a transparent canvas as it already was for an opaque
+  // one - only `transparent_ && !show_face_` (ticks/hands floating
+  // directly on a transparent background, no face circle at all - a
+  // real but currently unused combination) still needs a full redraw
+  // every frame, since there the erase step would otherwise paint an
+  // opaque disc where the background is supposed to show through.
+  bool full_redraw = this->ring_dirty_ || (this->transparent_ && !this->show_face_);
   if (full_redraw) {
     this->fill_bg_(&layer);
     if (this->show_face_) {
@@ -315,9 +341,11 @@ void SbbClock::render_() {
   // `transparent: true` clears to fully transparent via a dedicated
   // whole-canvas op (lv_canvas_fill_bg with LV_OPA_TRANSP) - a plain
   // lv_draw_rect can't "erase to transparent" the same way a normal alpha
-  // blend would just draw nothing, so the disc-erase shortcut above only
-  // applies to the (now-default) opaque canvas; transparent stays on the
-  // full-redraw path every frame, same as before this change.
+  // blend would just draw nothing. That's exactly why `transparent_ &&
+  // !show_face_` (see full_redraw's own comment above) still has to stay
+  // on the full-redraw path every frame - with a face, though, the erase
+  // step below never needs to touch a transparent pixel at all, so it's
+  // exactly as cheap as the always-opaque case.
 
   int hh, mm, ss;
   uint8_t wday, mday, month;
