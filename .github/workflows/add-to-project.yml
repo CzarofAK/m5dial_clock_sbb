@@ -1,0 +1,12 @@
+   name: Add to FRAM project
+   on:
+     issues:
+       types: [opened, transferred]
+   jobs:
+     add:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/add-to-project@v1
+           with:
+             project-url: https://github.com/users/CzarofAK/projects/2
+             github-token: ${{ secrets.PROJECT_TOKEN }}
