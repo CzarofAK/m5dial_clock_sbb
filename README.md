@@ -6,6 +6,12 @@ on an M5Dial (or any other ESP32 + LVGL display). No more five-style kit, no
 multi-display sync, no choreography modes - just this one clock, with real
 hand kinematics, night mode, date and temperature built in.
 
+> [!WARNING]
+> **Safety & liability / Sicherheit & Haftung** – Private hobby project, provided "as is" and used **at your own risk**.
+> Display widget only – no hazardous functions.
+> The design of the SBB station clock is protected; its rights are held by SBB (Swiss Federal Railways). This repository is not affiliated with or endorsed by SBB or Mondaine. Clarify the rights yourself before any commercial or public use of the clock face.
+> See [DISCLAIMER.md](DISCLAIMER.md) (EN/DE).
+
 ## Why rewritten instead of forked
 
 This repo started as an idea to fork `tuct/esphome-lvgl-clock` and trim it
@@ -291,3 +297,7 @@ behind it.)
   but not yet built or run on real hardware. Round 4 specifically was
   reported and fixed based on a description of the visible symptom on a
   real 10.1"-class panel, not from a local repro.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Use at your own risk – see [DISCLAIMER.md](DISCLAIMER.md).
