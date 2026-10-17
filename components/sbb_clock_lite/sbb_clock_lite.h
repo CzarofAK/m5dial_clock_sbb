@@ -7,6 +7,9 @@
 #ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
 #endif
+#ifdef USE_FONT
+#include "esphome/components/font/font.h"
+#endif
 
 #include <cstdint>
 
@@ -46,6 +49,11 @@ class SbbClockLite : public Component, public lvgl::LvCompound {
   void set_show_ring(bool on) { this->show_ring_ = on; }
   void set_show_date(bool on) { this->show_date_ = on; }
   void set_date_font(const lv_font_t *f) { this->date_font_ = f; }
+#ifdef USE_FONT
+  // ESPHome `font:` ids arrive as font::Font*, LVGL built-ins as lv_font_t*.
+  void set_date_font(font::Font *f) { this->date_font_ = f->get_lv_font(); }
+  void set_temperature_font(font::Font *f) { this->temperature_font_ = f->get_lv_font(); }
+#endif
   void set_show_temperature(bool on) { this->show_temperature_ = on; }
   void set_temperature_font(const lv_font_t *f) { this->temperature_font_ = f; }
 #ifdef USE_SENSOR
