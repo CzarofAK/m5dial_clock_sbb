@@ -251,6 +251,55 @@ time:
 defines as "night" - the component only knows the state, not the rule
 behind it.)
 
+## Lite variant: `sbb_clock_lite` (dark, canvas-free)
+
+Same face, same Stop2Go kinematics, same date/temperature lines - but no
+canvas. `sbb_clock` keeps its own RGB565 pixel buffer (240x240 = 115 kB of
+internal SRAM), which on a board without PSRAM like the M5Dial is the single
+biggest chunk of heap in the whole firmware. `sbb_clock_lite` is a plain
+`lv_obj` with an `LV_EVENT_DRAW_MAIN` callback that draws ticks, text and
+hands straight into LVGL's normal render buffer, clipped to whatever strip
+LVGL is refreshing; `loop()` only invalidates the boxes the hands actually
+moved through, and does nothing while its page is not on screen.
+
+- RAM: a few hundred bytes instead of ~115 kB.
+- Dark only: the widget has no background of its own - put it on a black
+  page. Options `background`, `night_mode`, `show_face`, `face_color`,
+  `corner_color` and `transparent` don't exist here; `show_ring` draws the
+  thin outer ring.
+- Smaller: just set `width`/`height` smaller; all proportions scale with
+  the radius.
+- Date/temperature use fixed char buffers - no `std::string` per frame.
+
+```yaml
+external_components:
+  - source: {type: git, url: https://github.com/CzarofAK/m5dial_clock_sbb, ref: main}
+    components: [sbb_clock_lite]
+sbb_clock_lite:
+
+lvgl:
+  pages:
+    - id: page_clock
+      bg_color: 0x000000
+      widgets:
+        - sbb_clock_lite:
+            align: CENTER
+            width: 240
+            height: 240
+            time_id: homeassistant_time
+            show_temperature: true
+            temperature_sensor_id: s_aussentemp
+```
+
+Options: `time_id` (required), `foreground`, `second_hand_color`,
+`show_seconds` (true), `second_hand_sweep` (58s), `render_interval` (100ms),
+`show_ticks` (true), `show_ring` (true), `show_date` (true), `date_font`,
+`show_temperature` (false), `temperature_sensor_id`, `temperature_font`.
+Full example: [examples/m5dial_page_lite.yaml](examples/m5dial_page_lite.yaml).
+
+Verified: ESPHome 2026.9.1 / LVGL 9.5.0 host build (SDL), rendered and
+checked for redraw trails over a full minute. Not yet flashed on the M5Dial.
+
 ## Configuration reference
 
 | Key | Type | Default | Meaning |

@@ -1,0 +1,44 @@
+# =====================================================================
+#  Beispiel: SBB-Uhr "lite" (dunkel, ohne Canvas) auf einem M5Dial
+#
+#  Gleiche Uhr wie sbb_clock, aber ohne eigenen Pixelpuffer: zeichnet
+#  direkt in LVGLs Render-Puffer. Spart bei 240x240 rund 115 kB internes
+#  RAM - gedacht für Boards ohne PSRAM. Nur dunkel (kein night_mode).
+#  Keine eigenständig lauffähige Konfiguration, setzt time: und lvgl:
+#  voraus (hier `homeassistant_time` als Beispiel-ID).
+# =====================================================================
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/CzarofAK/m5dial_clock_sbb
+      ref: main
+    refresh: 1d
+    components: [sbb_clock_lite]
+
+# Marker-Key - ohne ihn lädt ESPHome die Python-Seite nicht.
+sbb_clock_lite:
+
+color:
+  - id: col_ink
+    hex: FFFFFF
+  - id: col_second
+    hex: E74C3C
+
+lvgl:
+  pages:
+    - id: page_clock
+      bg_color: 0x000000   # Hintergrund kommt von der Seite
+      bg_opa: COVER
+      widgets:
+        - sbb_clock_lite:
+            id: clock_face
+            align: CENTER
+            width: 240       # kleiner = einfach kleiner setzen, z.B. 200
+            height: 240
+            time_id: homeassistant_time
+            foreground: col_ink
+            second_hand_color: col_second
+            show_ring: true
+            show_date: true
+            date_font: montserrat_16
